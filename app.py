@@ -7,21 +7,25 @@ import time
 from PIL import Image
 import io
 
-# --- 1. PAGE CONFIG ---
+# --- 1. PAGE CONFIG & UI ---
 st.set_page_config(page_title="AI Research Hub 2026", page_icon="🚀", layout="wide")
 st.title("🤖 Multimodal Research Agent")
 
-# --- 2. SETUP & 2026 MODEL OPTIONS ---
-# Replace with your actual API Key
-API_KEY = "AIzaSyANewrem-s-r6eAhe2fzqsFZPy-D-EJvlk"
-client = genai.Client(api_key=API_KEY)
+# --- 2. SECURE SETUP & 2026 MODELS ---
+# SECURE: Using Streamlit Secrets instead of hardcoding the key
+try:
+    API_KEY = st.secrets["GEMINI_API_KEY"]
+    client = genai.Client(api_key=API_KEY)
+except Exception:
+    st.error("Missing API Key! Please add GEMINI_API_KEY to your Streamlit Secrets.")
+    st.stop()
 
-# UPDATED: These are the officially supported IDs for 2026
+# UPDATED: Current 2026 Model IDs
 MODEL_OPTIONS = {
     "Gemini 3 Flash (Fastest/Newest)": "gemini-3-flash-preview",
     "Gemini 2.5 Flash (Most Reliable)": "gemini-2.5-flash",
     "Gemini 2.5 Pro (Deep Reasoning)": "gemini-2.5-pro",
-    "Gemini 2.5 Flash-Lite (High Quota)": "gemini-2.5-flash-lite"
+    "Gemini 2.5 Flash-Lite (Best for Quota)": "gemini-2.5-flash-lite"
 }
 
 PERSONAS = {
@@ -47,7 +51,7 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
     
-    st.info("💡 2026 Tip: Use 'Flash-Lite' if you hit daily rate limits.")
+    st.info("💡 2026 Tip: Use 'Flash-Lite' if you hit rate limits.")
 
 # --- 5. IMAGE PROCESSING (RGBA Fix) ---
 def process_image(uploaded_file):
@@ -109,7 +113,7 @@ if user_input:
                 st.markdown(answer)
                 st.session_state.messages.append({"role": "assistant", "content": answer})
                 
-                # Voice Output
+                # macOS Voice Output (Note: Works locally only)
                 voice = "Daniel" if current_persona == "Professor P" else "Samantha"
                 os.system(f'say -v "{voice}" "{answer.replace("\"", "").replace("\n", " ")}"')
 
