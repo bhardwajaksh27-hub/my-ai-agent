@@ -7,17 +7,16 @@ import time
 from PIL import Image
 import io
 
-# --- 1. PAGE CONFIG & UI ---
+# --- 1. PAGE CONFIG ---
 st.set_page_config(page_title="AI Research Hub 2026", page_icon="🚀", layout="wide")
 st.title("🤖 Multimodal Research Agent")
 
 # --- 2. SECURE SETUP & 2026 MODELS ---
-# SECURE: Using Streamlit Secrets instead of hardcoding the key
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     client = genai.Client(api_key=API_KEY)
 except Exception:
-    st.error("Missing API Key! Please add GEMINI_API_KEY to your Streamlit Secrets.")
+    st.error("⚠️ API Key Not Found! Please add GEMINI_API_KEY to your Streamlit Secrets.")
     st.stop()
 
 # UPDATED: Current 2026 Model IDs
@@ -34,21 +33,29 @@ PERSONAS = {
     "Zero": "A punchy, cool cyberpunk hacker. You use tech slang and focus on speed and digital edge."
 }
 
-# --- 3. SESSION STATE (Memory) ---
+# --- 3. SESSION STATE (Welcome Message by Aksh) ---
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    # This sets the very first bubble your friends see
+    st.session_state.messages = [
+        {
+            "role": "assistant", 
+            "content": "👋 **Welcome! You are speaking with an AI Research Agent created by Aksh.** \n\nHow may I assist you today?"
+        }
+    ]
 
 # --- 4. SIDEBAR CONTROLS ---
 with st.sidebar:
     st.header("Control Panel")
     selected_model_label = st.selectbox("Switch Model", list(MODEL_OPTIONS.keys()))
     current_model = MODEL_OPTIONS[selected_model_label]
-    
     current_persona = st.selectbox("Choose Persona", list(PERSONAS.keys()))
     
     st.divider()
     if st.button("Clear Conversation"):
-        st.session_state.messages = []
+        # Resetting back to the Aksh Welcome Message
+        st.session_state.messages = [
+            {"role": "assistant", "content": "👋 **Welcome to an agent made by Aksh.**"}
+        ]
         st.rerun()
     
     st.info("💡 2026 Tip: Use 'Flash-Lite' if you hit rate limits.")
@@ -113,7 +120,7 @@ if user_input:
                 st.markdown(answer)
                 st.session_state.messages.append({"role": "assistant", "content": answer})
                 
-                # macOS Voice Output (Note: Works locally only)
+                # macOS Voice Output
                 voice = "Daniel" if current_persona == "Professor P" else "Samantha"
                 os.system(f'say -v "{voice}" "{answer.replace("\"", "").replace("\n", " ")}"')
 
