@@ -3,23 +3,23 @@ from google import genai
 from google.genai import types
 from duckduckgo_search import DDGS
 import os
-import time
 from PIL import Image
 import io
 
-# --- 1. PAGE CONFIG ---
+# --- 1. PAGE CONFIG & UI ---
 st.set_page_config(page_title="AI Research Hub 2026", page_icon="🚀", layout="wide")
 st.title("🤖 Multimodal Research Agent")
 
 # --- 2. SECURE SETUP & 2026 MODELS ---
 try:
+    # Looks for GEMINI_API_KEY in Streamlit Secrets
     API_KEY = st.secrets["GEMINI_API_KEY"]
     client = genai.Client(api_key=API_KEY)
 except Exception:
-    st.error("⚠️ API Key Not Found! Please add GEMINI_API_KEY to your Streamlit Secrets.")
+    st.error("⚠️ API Key Not Found! Go to Settings > Secrets and add GEMINI_API_KEY.")
     st.stop()
 
-# UPDATED: Current 2026 Model IDs
+# UPDATED: Verified 2026 Model IDs
 MODEL_OPTIONS = {
     "Gemini 3 Flash (Fastest/Newest)": "gemini-3-flash-preview",
     "Gemini 2.5 Flash (Most Reliable)": "gemini-2.5-flash",
@@ -33,15 +33,13 @@ PERSONAS = {
     "Zero": "A punchy, cool cyberpunk hacker. You use tech slang and focus on speed and digital edge."
 }
 
-# --- 3. SESSION STATE (Welcome Message by Aksh) ---
+# --- 3. SESSION STATE (Welcome & History) ---
 if "messages" not in st.session_state:
-    # This sets the very first bubble your friends see
     st.session_state.messages = [
-        {
-            "role": "assistant", 
-            "content": "👋 **Welcome! You are speaking with an AI Research Agent created by Aksh.** \n\nHow may I assist you today?"
-        }
+        {"role": "assistant", "content": "👋 **Welcome! You are speaking with an AI Research Agent created by Aksh.**"}
     ]
+if "chat_history_summary" not in st.session_state:
+    st.session_state.chat_history_summary = []
 
 # --- 4. SIDEBAR CONTROLS ---
 with st.sidebar:
@@ -51,18 +49,23 @@ with st.sidebar:
     current_persona = st.selectbox("Choose Persona", list(PERSONAS.keys()))
     
     st.divider()
-    if st.button("Clear Conversation"):
-        # Resetting back to the Aksh Welcome Message
-        st.session_state.messages = [
-            {"role": "assistant", "content": "👋 **Welcome to an agent made by Aksh.**"}
-        ]
-        st.rerun()
     
-    st.info("💡 2026 Tip: Use 'Flash-Lite' if you hit rate limits.")
+    # NEW: Chat History Log
+    st.subheader("📜 Recent Questions")
+    if st.session_state.chat_history_summary:
+        for q in st.session_state.chat_history_summary:
+            st.write(f"• {q}")
+    else:
+        st.write("No questions yet.")
+
+    st.divider()
+    if st.button("Clear Conversation"):
+        st.session_state.messages = [{"role": "assistant", "content": "👋 **Welcome to an agent made by Aksh.**"}]
+        st.session_state.chat_history_summary = []
+        st.rerun()
 
 # --- 5. IMAGE PROCESSING (RGBA Fix) ---
 def process_image(uploaded_file):
-    """Resizes and converts images to prevent 'RGBA to JPEG' errors."""
     image = Image.open(uploaded_file)
     if image.mode in ("RGBA", "P"):
         image = image.convert("RGB")
@@ -80,7 +83,10 @@ uploaded_file = st.file_uploader("Drop an image for analysis...", type=["jpg", "
 user_input = st.chat_input("Ask a question...")
 
 if user_input:
+    # Add to Sidebar History
+    st.session_state.chat_history_summary.append(user_input[:30] + "...")
     st.session_state.messages.append({"role": "user", "content": user_input})
+    
     with st.chat_message("user"):
         st.markdown(user_input)
 
@@ -94,16 +100,13 @@ if user_input:
                     compressed_img = process_image(uploaded_file)
                     content_parts.append(types.Part.from_bytes(data=compressed_img, mime_type="image/jpeg"))
 
-                # API Call
                 response = client.models.generate_content(
                     model=current_model,
                     contents=content_parts,
                     config={"system_instruction": instruction}
                 )
-                
                 answer = response.text
                 
-                # Search Tool Logic
                 if "SEARCH:" in answer:
                     query = answer.split("SEARCH:")[1].strip()
                     st.write(f"🔍 *{current_persona} is searching for: {query}...*")
@@ -125,7 +128,4 @@ if user_input:
                 os.system(f'say -v "{voice}" "{answer.replace("\"", "").replace("\n", " ")}"')
 
             except Exception as e:
-                if "429" in str(e):
-                    st.error("🚨 Rate Limit! Switch to 'Flash-Lite' or wait 30s.")
-                else:
-                    st.error(f"❌ Error: {e}")
+                st.error(f"❌ Error: {e}")
