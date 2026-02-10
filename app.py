@@ -10,9 +10,10 @@ import pytz
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-# --- 1. PAGE CONFIG & CUSTOM THEME ---
+# --- 1. PAGE CONFIG & THEME ---
 st.set_page_config(page_title="Research Vault 2026", page_icon="🚀", layout="wide")
 
+# Subtle Signature
 st.markdown("""
     <style>
     .aksh-signature {
@@ -26,77 +27,69 @@ st.markdown("""
         opacity: 0.7;
     }
     </style>
-    <div class="aksh-signature">CLOUD_VAULT_GSHEETS // AKSH • 2026</div>
+    <div class="aksh-signature">CLOUD_VAULT_FINAL // AKSH • 2026</div>
     """, unsafe_allow_html=True)
 
-# --- 2. GOOGLE SHEETS CONNECTION (The Cloud Vault) ---
-# Note: Requires "gsheets" configuration in st.secrets
+# --- 2. CLOUD VAULT CONNECTION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def save_to_cloud_vault(role, content):
-    """Appends data to the Google Sheet."""
+    """Saves chat to Google Sheets."""
     try:
-        # Fetch current data
-        df = conn.read(ttl=0) 
-        
-        # Create new record
+        df = conn.read(ttl=0)
         new_data = pd.DataFrame([{
             "Timestamp": datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%Y-%m-%d %H:%M:%S"),
             "Role": role,
             "Content": content
         }])
-        
-        # Combine and update
         updated_df = pd.concat([df, new_data], ignore_index=True)
         conn.update(data=updated_df)
     except Exception as e:
         st.error(f"Cloud Save Error: {e}")
 
 def load_cloud_vault():
-    """Retrieves history from Google Sheets."""
+    """Loads chat from Google Sheets."""
     try:
-        df = conn.read(ttl=0)
-        return df.to_dict(orient="records")
+        return conn.read(ttl=0).to_dict(orient="records")
     except:
         return []
 
-# --- 3. MODELS & SETUP ---
+# --- 3. CORE SETUP ---
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     client = genai.Client(api_key=API_KEY)
 except Exception:
-    st.error("⚠️ API Key Not Found! Check Streamlit Secrets.")
+    st.error("⚠️ API Key Missing in Secrets!")
     st.stop()
 
 MODEL_OPTIONS = {
     "Gemini 2.5 Flash-Lite (High Quota)": "gemini-2.5-flash-lite",
-    "Gemini 3 Flash (Fastest)": "gemini-3-flash-preview",
-    "Gemini 2.5 Pro (Deep Reasoning)": "gemini-2.5-pro"
+    "Gemini 3 Flash (Fastest)": "gemini-3-flash-preview"
 }
 
 PERSONAS = {
     "Professor P": "A grumpy, sarcastic British academic.",
     "Alfred": "A polite, formal butler.",
-    "Zero": "A punchy, cool cyberpunk hacker."
+    "Zero": "A cool cyberpunk hacker."
 }
 
-# --- 4. TEMPORAL AWARENESS ---
 local_tz = pytz.timezone('Asia/Kolkata')
-now = datetime.now(local_tz)
-current_time_str = now.strftime("%I:%M %p")
+current_time_str = datetime.now(local_tz).strftime("%I:%M %p")
 
-# --- 5. SESSION STATE (Load from Cloud) ---
+# --- 4. SESSION STATE & HISTORY FIX ---
 if "messages" not in st.session_state:
     saved_chats = load_cloud_vault()
-    if saved_chats:
-        st.session_state.messages = saved_chats
-    else:
-        st.session_state.messages = [{"role": "assistant", "content": "👋 **Cloud Vault Online.** History Sync Complete."}]
+    st.session_state.messages = saved_chats if saved_chats else [{"Role": "assistant", "Content": "👋 Cloud Vault Online."}]
 
+# Fixed: Handles 'Role' vs 'role' and 'Content' vs 'content'
 if "chat_history_summary" not in st.session_state:
-    st.session_state.chat_history_summary = [m["Content"][:25] + "..." for m in st.session_state.messages if m["role"] == "user"]
+    st.session_state.chat_history_summary = [
+        (m.get("Content") or m.get("content", ""))[:25] + "..." 
+        for m in st.session_state.messages 
+        if (m.get("Role") or m.get("role")) == "user"
+    ]
 
-# --- 6. SIDEBAR ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
     st.header("Vault Control")
     selected_model_label = st.selectbox("Switch Brain", list(MODEL_OPTIONS.keys()))
@@ -109,12 +102,12 @@ with st.sidebar:
     st.subheader("📜 Cloud Logs")
     for q in st.session_state.chat_history_summary[-5:]:
         st.caption(f"• {q}")
-        
-    if st.button("Reset View"):
-        st.session_state.messages = [{"role": "assistant", "content": "👋 **View Reset.**"}]
+    
+    if st.button("Refresh Vault"):
+        st.session_state.clear()
         st.rerun()
 
-# --- 7. OPTIMIZATION FUNCTIONS ---
+# --- 6. UTILITIES ---
 def process_image(uploaded_file):
     image = Image.open(uploaded_file)
     if image.mode in ("RGBA", "P"): image = image.convert("RGB")
@@ -123,31 +116,28 @@ def process_image(uploaded_file):
     image.save(img_byte_arr, format='JPEG', quality=75)
     return img_byte_arr.getvalue()
 
-def speak(text, persona):
-    voice = "Daniel" if persona == "Professor P" else "Samantha"
-    os.system(f'say -v "{voice}" "{text.replace("\"", "").replace("\n", " ")}" &')
-
-# --- 8. CHAT INTERFACE ---
+# --- 7. CHAT INTERFACE ---
 for message in st.session_state.messages:
-    # Handle both lowercase 'role' and uppercase 'Role' from DataFrame
-    role = message.get("role") or message.get("Role")
-    content = message.get("content") or message.get("Content")
-    with st.chat_message(role):
-        st.markdown(content)
+    # Safe key retrieval
+    m_role = message.get("Role") or message.get("role")
+    m_content = message.get("Content") or message.get("content")
+    with st.chat_message(m_role):
+        st.markdown(m_content)
 
 uploaded_file = st.file_uploader("Upload Data", type=["jpg", "png", "jpeg"])
 user_input = st.chat_input("Enter your research query...")
 
 if user_input:
-    # Update Session & Cloud
-    st.session_state.messages.append({"role": "user", "content": user_input})
+    # Save to local and cloud
+    st.session_state.messages.append({"Role": "user", "Content": user_input})
+    st.session_state.chat_history_summary.append(user_input[:25] + "...")
     save_to_cloud_vault("user", user_input)
     
     with st.chat_message("user"):
         st.markdown(user_input)
 
     with st.chat_message("assistant"):
-        with st.spinner(f"Consulting {current_model}..."):
+        with st.spinner("Analyzing..."):
             try:
                 instruction = f"You are {current_persona}. {PERSONAS[current_persona]}. Time: {current_time_str}."
                 content_parts = [user_input]
@@ -158,7 +148,7 @@ if user_input:
                 response = client.models.generate_content(model=current_model, contents=content_parts, config={"system_instruction": instruction})
                 answer = response.text
                 
-                # Search Trigger Logic
+                # Search Logic
                 if "SEARCH:" in answer:
                     query = answer.split("SEARCH:")[1].strip()
                     with DDGS() as ddgs:
@@ -167,12 +157,8 @@ if user_input:
                     answer = final_res.text
 
                 st.markdown(answer)
-                st.session_state.messages.append({"role": "assistant", "content": answer})
+                st.session_state.messages.append({"Role": "assistant", "Content": answer})
                 save_to_cloud_vault("assistant", answer)
-                speak(answer, current_persona)
 
             except Exception as e:
-                if "429" in str(e):
-                    st.error("🚨 Quota Limit! Switch to Flash-Lite.")
-                else:
-                    st.error(f"Error: {e}")
+                st.error(f"Error: {e}")
