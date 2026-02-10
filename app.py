@@ -3,11 +3,12 @@ from google import genai
 from google.genai import types
 from duckduckgo_search import DDGS
 import os
-import sqlite3
 from PIL import Image
 import io
 from datetime import datetime
 import pytz
+from streamlit_gsheets import GSheetsConnection
+import pandas as pd
 
 # --- 1. PAGE CONFIG & CUSTOM THEME ---
 st.set_page_config(page_title="Research Vault 2026", page_icon="🚀", layout="wide")
@@ -25,53 +26,46 @@ st.markdown("""
         opacity: 0.7;
     }
     </style>
-    <div class="aksh-signature">RESEARCH_VAULT_V1 // AKSH • 2026</div>
+    <div class="aksh-signature">CLOUD_VAULT_GSHEETS // AKSH • 2026</div>
     """, unsafe_allow_html=True)
 
-# --- 2. PERMANENT DATABASE (The Vault) ---
-def init_db():
-    """Initializes the SQLite database."""
-    conn = sqlite3.connect('research_vault.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS history 
-                 (timestamp TEXT, role TEXT, content TEXT)''')
-    conn.commit()
-    conn.close()
+# --- 2. GOOGLE SHEETS CONNECTION (The Cloud Vault) ---
+# Note: Requires "gsheets" configuration in st.secrets
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-def save_to_vault(role, content):
-    """Saves a single message to the permanent database."""
-    conn = sqlite3.connect('research_vault.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO history VALUES (?, ?, ?)", 
-              (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), role, content))
-    conn.commit()
-    conn.close()
+def save_to_cloud_vault(role, content):
+    """Appends data to the Google Sheet."""
+    try:
+        # Fetch current data
+        df = conn.read(ttl=0) 
+        
+        # Create new record
+        new_data = pd.DataFrame([{
+            "Timestamp": datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%Y-%m-%d %H:%M:%S"),
+            "Role": role,
+            "Content": content
+        }])
+        
+        # Combine and update
+        updated_df = pd.concat([df, new_data], ignore_index=True)
+        conn.update(data=updated_df)
+    except Exception as e:
+        st.error(f"Cloud Save Error: {e}")
 
-def load_vault():
-    """Retrieves all previous messages from the database."""
-    conn = sqlite3.connect('research_vault.db')
-    c = conn.cursor()
-    c.execute("SELECT role, content FROM history ORDER BY timestamp ASC")
-    rows = c.fetchall()
-    conn.close()
-    return [{"role": r[0], "content": r[1]} for r in rows]
-
-def clear_vault():
-    """Wipes the database."""
-    conn = sqlite3.connect('research_vault.db')
-    c = conn.cursor()
-    c.execute("DELETE FROM history")
-    conn.commit()
-    conn.close()
-
-init_db()
+def load_cloud_vault():
+    """Retrieves history from Google Sheets."""
+    try:
+        df = conn.read(ttl=0)
+        return df.to_dict(orient="records")
+    except:
+        return []
 
 # --- 3. MODELS & SETUP ---
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     client = genai.Client(api_key=API_KEY)
 except Exception:
-    st.error("⚠️ API Key Not Found in Secrets!")
+    st.error("⚠️ API Key Not Found! Check Streamlit Secrets.")
     st.stop()
 
 MODEL_OPTIONS = {
@@ -82,7 +76,7 @@ MODEL_OPTIONS = {
 
 PERSONAS = {
     "Professor P": "A grumpy, sarcastic British academic.",
-    "Alfred": "A polite, formal butler. You refer to the user as 'Master'.",
+    "Alfred": "A polite, formal butler.",
     "Zero": "A punchy, cool cyberpunk hacker."
 }
 
@@ -90,18 +84,17 @@ PERSONAS = {
 local_tz = pytz.timezone('Asia/Kolkata')
 now = datetime.now(local_tz)
 current_time_str = now.strftime("%I:%M %p")
-current_date_str = now.strftime("%A, %B %d, %Y")
 
-# --- 5. SESSION STATE (Load from Vault) ---
+# --- 5. SESSION STATE (Load from Cloud) ---
 if "messages" not in st.session_state:
-    saved_chats = load_vault()
+    saved_chats = load_cloud_vault()
     if saved_chats:
         st.session_state.messages = saved_chats
     else:
-        st.session_state.messages = [{"role": "assistant", "content": f"👋 **Vault Online.** Today is {current_date_str}. History Loaded."}]
+        st.session_state.messages = [{"role": "assistant", "content": "👋 **Cloud Vault Online.** History Sync Complete."}]
 
 if "chat_history_summary" not in st.session_state:
-    st.session_state.chat_history_summary = [m["content"][:25] + "..." for m in st.session_state.messages if m["role"] == "user"]
+    st.session_state.chat_history_summary = [m["Content"][:25] + "..." for m in st.session_state.messages if m["role"] == "user"]
 
 # --- 6. SIDEBAR ---
 with st.sidebar:
@@ -113,18 +106,15 @@ with st.sidebar:
     st.divider()
     st.metric("🕒 IST", current_time_str)
     
-    st.subheader("📜 History")
-    for q in st.session_state.chat_history_summary[-7:]:
+    st.subheader("📜 Cloud Logs")
+    for q in st.session_state.chat_history_summary[-5:]:
         st.caption(f"• {q}")
         
-    st.divider()
-    if st.button("Purge Vault"):
-        clear_vault()
-        st.session_state.messages = [{"role": "assistant", "content": "👋 **Vault Purged.**"}]
-        st.session_state.chat_history_summary = []
+    if st.button("Reset View"):
+        st.session_state.messages = [{"role": "assistant", "content": "👋 **View Reset.**"}]
         st.rerun()
 
-# --- 7. CORE FUNCTIONS ---
+# --- 7. OPTIMIZATION FUNCTIONS ---
 def process_image(uploaded_file):
     image = Image.open(uploaded_file)
     if image.mode in ("RGBA", "P"): image = image.convert("RGB")
@@ -139,17 +129,19 @@ def speak(text, persona):
 
 # --- 8. CHAT INTERFACE ---
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    # Handle both lowercase 'role' and uppercase 'Role' from DataFrame
+    role = message.get("role") or message.get("Role")
+    content = message.get("content") or message.get("Content")
+    with st.chat_message(role):
+        st.markdown(content)
 
 uploaded_file = st.file_uploader("Upload Data", type=["jpg", "png", "jpeg"])
 user_input = st.chat_input("Enter your research query...")
 
 if user_input:
-    # Save User message
+    # Update Session & Cloud
     st.session_state.messages.append({"role": "user", "content": user_input})
-    st.session_state.chat_history_summary.append(user_input[:25] + "...")
-    save_to_vault("user", user_input)
+    save_to_cloud_vault("user", user_input)
     
     with st.chat_message("user"):
         st.markdown(user_input)
@@ -157,7 +149,7 @@ if user_input:
     with st.chat_message("assistant"):
         with st.spinner(f"Consulting {current_model}..."):
             try:
-                instruction = f"You are {current_persona}. {PERSONAS[current_persona]}. Time: {current_time_str}. Search: 'SEARCH: <query>'."
+                instruction = f"You are {current_persona}. {PERSONAS[current_persona]}. Time: {current_time_str}."
                 content_parts = [user_input]
                 if uploaded_file:
                     img_data = process_image(uploaded_file)
@@ -166,6 +158,7 @@ if user_input:
                 response = client.models.generate_content(model=current_model, contents=content_parts, config={"system_instruction": instruction})
                 answer = response.text
                 
+                # Search Trigger Logic
                 if "SEARCH:" in answer:
                     query = answer.split("SEARCH:")[1].strip()
                     with DDGS() as ddgs:
@@ -175,11 +168,11 @@ if user_input:
 
                 st.markdown(answer)
                 st.session_state.messages.append({"role": "assistant", "content": answer})
-                save_to_vault("assistant", answer) # Save Assistant message
+                save_to_cloud_vault("assistant", answer)
                 speak(answer, current_persona)
 
             except Exception as e:
                 if "429" in str(e):
-                    st.error("🚨 Quota Limit! Switching to Flash-Lite is recommended.")
+                    st.error("🚨 Quota Limit! Switch to Flash-Lite.")
                 else:
                     st.error(f"Error: {e}")
