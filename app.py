@@ -13,7 +13,6 @@ import pandas as pd
 # --- 1. PAGE CONFIG & THEME ---
 st.set_page_config(page_title="Research Vault 2026", page_icon="🚀", layout="wide")
 
-# Subtle Signature
 st.markdown("""
     <style>
     .aksh-signature {
@@ -27,16 +26,17 @@ st.markdown("""
         opacity: 0.7;
     }
     </style>
-    <div class="aksh-signature">CLOUD_VAULT_FINAL // AKSH • 2026</div>
+    <div class="aksh-signature">BULLETPROOF_VAULT_V2 // AKSH • 2026</div>
     """, unsafe_allow_html=True)
 
 # --- 2. CLOUD VAULT CONNECTION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def save_to_cloud_vault(role, content):
-    """Saves chat to Google Sheets."""
+    """Saves chat to Google Sheets with standardized headers."""
     try:
         df = conn.read(ttl=0)
+        # Ensure we always use 'Role' and 'Content' for the Sheet
         new_data = pd.DataFrame([{
             "Timestamp": datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%Y-%m-%d %H:%M:%S"),
             "Role": role,
@@ -48,9 +48,10 @@ def save_to_cloud_vault(role, content):
         st.error(f"Cloud Save Error: {e}")
 
 def load_cloud_vault():
-    """Loads chat from Google Sheets."""
+    """Loads history and returns an empty list if sheet is empty or fails."""
     try:
-        return conn.read(ttl=0).to_dict(orient="records")
+        data = conn.read(ttl=0)
+        return data.to_dict(orient="records") if not data.empty else []
     except:
         return []
 
@@ -76,18 +77,21 @@ PERSONAS = {
 local_tz = pytz.timezone('Asia/Kolkata')
 current_time_str = datetime.now(local_tz).strftime("%I:%M %p")
 
-# --- 4. SESSION STATE & HISTORY FIX ---
+# --- 4. SAFE SESSION STATE INITIALIZATION ---
 if "messages" not in st.session_state:
     saved_chats = load_cloud_vault()
+    # Ensure default message uses the Sheet-friendly 'Role'/'Content' keys
     st.session_state.messages = saved_chats if saved_chats else [{"Role": "assistant", "Content": "👋 Cloud Vault Online."}]
 
-# Fixed: Handles 'Role' vs 'role' and 'Content' vs 'content'
+# Safe Summary Logic: Prevents KeyError by checking all casing
 if "chat_history_summary" not in st.session_state:
-    st.session_state.chat_history_summary = [
-        (m.get("Content") or m.get("content", ""))[:25] + "..." 
-        for m in st.session_state.messages 
-        if (m.get("Role") or m.get("role")) == "user"
-    ]
+    summary_list = []
+    for m in st.session_state.messages:
+        m_role = m.get("Role") or m.get("role")
+        m_content = m.get("Content") or m.get("content", "")
+        if m_role == "user":
+            summary_list.append(str(m_content)[:25] + "...")
+    st.session_state.chat_history_summary = summary_list
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
@@ -100,10 +104,11 @@ with st.sidebar:
     st.metric("🕒 IST", current_time_str)
     
     st.subheader("📜 Cloud Logs")
+    # Show last 5 queries safely
     for q in st.session_state.chat_history_summary[-5:]:
         st.caption(f"• {q}")
     
-    if st.button("Refresh Vault"):
+    if st.button("Refresh & Sync"):
         st.session_state.clear()
         st.rerun()
 
@@ -118,9 +123,9 @@ def process_image(uploaded_file):
 
 # --- 7. CHAT INTERFACE ---
 for message in st.session_state.messages:
-    # Safe key retrieval
-    m_role = message.get("Role") or message.get("role")
-    m_content = message.get("Content") or message.get("content")
+    # Use .get() to avoid KeyError if headers vary
+    m_role = message.get("Role") or message.get("role") or "assistant"
+    m_content = message.get("Content") or message.get("content") or ""
     with st.chat_message(m_role):
         st.markdown(m_content)
 
@@ -128,7 +133,7 @@ uploaded_file = st.file_uploader("Upload Data", type=["jpg", "png", "jpeg"])
 user_input = st.chat_input("Enter your research query...")
 
 if user_input:
-    # Save to local and cloud
+    # Update local state and cloud with standardized keys
     st.session_state.messages.append({"Role": "user", "Content": user_input})
     st.session_state.chat_history_summary.append(user_input[:25] + "...")
     save_to_cloud_vault("user", user_input)
@@ -148,7 +153,7 @@ if user_input:
                 response = client.models.generate_content(model=current_model, contents=content_parts, config={"system_instruction": instruction})
                 answer = response.text
                 
-                # Search Logic
+                # Check for Search trigger
                 if "SEARCH:" in answer:
                     query = answer.split("SEARCH:")[1].strip()
                     with DDGS() as ddgs:
