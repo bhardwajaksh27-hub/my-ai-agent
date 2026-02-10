@@ -2,3 +2,6 @@ google-genai
 streamlit
 duckduckgo_search
 Pillow
+pytz
+st-gsheets-connection
+pandas
